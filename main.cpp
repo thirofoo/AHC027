@@ -1,6 +1,7 @@
 #include <bits/stdc++.h>
 using namespace std;
 #define rep(i, n) for(int i = 0; i < n; i++)
+#define reps(i, s, n) for (int i = s; i < n; i++)
 
 namespace utility {
     struct timer {
@@ -16,235 +17,378 @@ namespace utility {
         }
     } mytm;
 }
-#define TIME_LIMIT 100000
+
+inline unsigned int rand_int() {
+    static unsigned int tx = 123456789, ty=362436069, tz=521288629, tw=88675123;
+    unsigned int tt = (tx^(tx<<11));
+    tx = ty; ty = tz; tz = tw;
+    return ( tw=(tw^(tw>>19))^(tt^(tt>>8)) );
+}
+
+inline double rand_double() {
+    return (double)(rand_int()%(int)1e9)/1e9;
+}
+
+//温度関数
+#define TIME_LIMIT 2950
+inline double temp(double start) {
+    double start_temp = 1000, end_temp = 10;
+    return start_temp + (end_temp-start_temp)*((utility::mytm.elapsed()-start)/TIME_LIMIT);
+}
+
+//焼きなましの採用確率
+inline double prob(long long best,long long now,int start) {
+    return exp((double)(best-now) / temp(start));
+}
 
 //-----------------以下から実装部分-----------------//
+using P = pair<int,int>;
 
 #define DIR_NUM 4
 // 上下左右の順番
 vector<int> dx = {-1, 1, 0, 0};
 vector<int> dy = { 0, 0,-1, 1};
 
-int n;
-vector<vector<int>> d;
-
-template <class S>
-struct Zobrist_hash_set {
-    public:
-    Zobrist_hash_set() : v(0) {
-        mt.seed(rand());
-        rnd = uniform_int_distribution<long long>(-LLONG_MAX, LLONG_MAX);
-    }
-    void flip(const S& x) { // hash flip
-        if (!x_to_hash.count(x)) x_to_hash[x] = rnd(mt);
-        v ^= x_to_hash[x];
-    }
-    void init() { v = 0; } // hash初期化
-    void set(long long _v) { v = _v; } // hash set
-    long long get() { return v; } // 現時点の状態hash値を返す．
-    
-    private:
-    long long v; // hash値
-    mt19937_64 mt;
-    uniform_int_distribution<long long> rnd;
-    unordered_map<S, long long> x_to_hash; // 各 x ∈ X に対するハッシュの割当
-};
-Zobrist_hash_set<int> zh;
-
-struct State{
-    bool isDone;
-    char action;
-    long long hash;
-    int score, x, y, cnt;
-    vector<long long> vis; // bit で訪問済みかを持っておく
-    State() : score(0), hash(0LL) {}
-    explicit State(const State& pre, const int dir) {
-        x = pre.x + dx[dir], y = pre.y + dy[dir];
-        vis = pre.vis;
-        // 各マス (n*n) * 現在地か否か で Zobrist Hash
-        zh.set( pre.hash );
-        zh.flip( pre.x*(n+2)+pre.y + (n+2)*(n+2) );
-        zh.flip( pre.x*(n+2)+pre.y );
-        if( vis[x] & (1LL << y) ) zh.flip( x*(n+2)+y );
-        zh.flip( x*(n+2)+y + (n+2)*(n+2) );
-
-        action = changeChar(dir);
-        vis[x] |= (1LL << y);
-        hash = zh.get();
-        calsScore();
-    }
-
-    inline void calsScore() {
-        score = 0, cnt = 0;
-        for(int i=1; i<=n; i++) {
-            for(int j=1; j<=n; j++) {
-                if( (vis[i] & (1LL << j)) || abs(i-x)+abs(j-y) == 0 ) continue;
-                score += d[i][j] / (abs(i-x)+abs(j-y));
-                cnt++;
-            }
-        }
-    }
-    inline char changeChar(int dir) {
-        if     ( dir == 0 ) return 'U';
-        else if( dir == 1 ) return 'D';
-        else if( dir == 2 ) return 'L';
-        else                return 'R';
-    }
-    bool operator<(const State& s) const {
-        if( cnt == s.cnt ) return (score < s.score);
-        return (cnt > s.cnt);
+struct Rect{
+    int x, y, xl, yl, area;
+    Rect() : x(0), y(0), xl(0), yl(0) {}
+    explicit Rect(int _x, int _y, int _xl, int _yl) : x(_x), y(_y), xl(_xl), yl(_yl), area(_xl*_yl) {}
+    bool operator<(const Rect& r) const {
+        // 両者縦横いずれかに偶数長がある ⇒ 面積が大きい方が『真に大きい』
+        // そうでない場合 ⇒ 偶数長がある長方形が『真に大きい』
+        if( !(area%2) == !(r.area%2) ) return (abs(x-y) > abs(r.x-r.y));
+        return (area%2);
     }
 };
 
 struct Solver{
-    int now_x, now_y, nx, ny, best_score;
-    State state;
-    string s, ans;
-    long long best_hash, init_hash;
+    int n, xl, yl, dr, dc, nx, ny, d_total, rect_cnt, rect_idx, turn;
+    long long best_score, cand_score;
+    vector<P> ans;
+    vector<Rect> rects;
+    vector<bool> vis_rect, l_shape;
     vector<vector<bool>> vis;
-    vector<vector<int>> clean_turn;
+    vector<vector<int>> d, rect, clean_turn, vis_cnt;
     vector<vector<vector<bool>>> wall;
-    map<long long, pair<long long, char>> parent;
-    
+    vector<vector<vector<int>>> history;
+
     Solver(){
         this->input();
-        vis.assign(n+2,vector<bool>(n+2,true));
-        clean_turn.assign(n+2,vector<int>(n+2,0));
-        for(int i=1; i<=n; i++) for(int j=1; j<=n; j++) vis[i][j] = false;
+        vis_rect.assign(rect_idx,false);
+        vis.assign(n+2,vector(n+2,true));
+        rect.assign(n+2,vector(n+2,0));
+        vis_cnt.assign(n+2,vector(n+2,0));
+        clean_turn.assign(n+2,vector(n+2,0));
+        history.assign(n+2,vector(n+2,vector<int>{}));
+        reps(i,1,n+1) reps(j,1,n+1) rect[i][j] = false, vis[i][j] = false;
 
-        // State 初期化
-        state.vis = vector<long long>(n+2,0);
-        state.x = 1, state.y = 1;
-        zh.init(), zh.flip( state.x*(n+2)+state.y + (n+2)*(n+2) );
-        state.hash = zh.get();
-        init_hash = state.hash;
-        best_hash = 0;
-        state.calsScore();
+        vis_rect[0] = true;
+        turn = 0;
+        utility::mytm.CodeStart();
     }
 
     void input(){
         cin >> n;
-        d.assign(n+2,vector<int>(n+2,0));
-        wall.assign(n+2,vector(n+2,vector<bool>(4,true)));
-        for(int i=1; i<=n-1; i++) {
-            cin >> s;
-            for(int j=1; j<=n; j++) {
+        d.assign(n+2,vector(n+2,0));
+        wall.assign(n+2,vector(n+2,vector(4,true)));
+        reps(i,1,n) {
+            string s; cin >> s;
+            reps(j,1,n+1) {
                 wall[i][j][1] = s[j-1]-'0';
                 wall[i+1][j][0] = s[j-1]-'0';
             }
         }
-        for(int i=1; i<=n; i++) {
-            cin >> s;
-            for(int j=1; j<=n-1; j++) {
+        reps(i,1,n+1) {
+            string s; cin >> s;
+            reps(j,1,n) {
                 wall[i][j][3] = s[j-1]-'0';
                 wall[i][j+1][2] = s[j-1]-'0';
             }
         }
-        for(int i=1; i<=n; i++) for(int j=1; j<=n; j++) cin >> d[i][j];
+        d_total = 0;
+        reps(i,1,n+1) reps(j,1,n+1) {
+            cin >> d[i][j];
+            d_total += d[i][j];
+        }
         return;
     }
 
     void output(){
-        cout << ans << '\n' << flush;
+        rep(i,ans.size()-1) {
+            auto&& [x1,y1] = ans[i];
+            auto&& [x2,y2] = ans[i+1];
+            char ch = changeChar(x1,y1,x2,y2);
+            cout << ch;
+        }
+        cout << '\n' << flush;
+        cerr << best_score / (ans.size()-1) << '\n';
         return;
     }
 
     void solve(){
-        // 深さ 10000, 幅 1 の chokudai search で愚直判定 O(N^2) でやってみる
-        // 評価値 : ∑ (未訪問 ? d*turn : 0) / (Manhattan)
-        chokudaiSearch(state, 1, 10000, TIME_LIMIT);
-        convertAnswer(); // hash で最善手を復元
-        returnToStart(); // Start地点に戻る
+        // まずは貪欲解
+        // 1. 縦横少なくとも一方が偶数の長方形を確保 (今回は評価値は面積)
+        // 2. 長方形を繋げていく (長方形は少ない方が良い)
+        // ※ 奇数*奇数 の長方形は 辺の長さが1 ⇒ その面積分余分に移動必要
+        //            〃          どちらも2以上 ⇒ 2だけ余分に移動必要
+
+        selectRect();             // 長方形を選別
+        walkRect(rect[1][1],1,1); // 初期解生成
+
+        best_score = 0;
+        reps(i,1,n+1)reps(j,1,n+1) {
+            auto&& h = history[i][j];
+            rep(k,h.size()) {
+                int size = (k == h.size()-1 ? h[0]+ans.size()-1-h[k] : h[k+1]-h[k]);
+                best_score += ((size-1)*d[i][j])*size/2;
+            }
+        }
+        cerr << best_score / (ans.size()-1) << endl;
+
+        moveRect();               // 焼き鈍しで初期解いじり
+
         return;
     }
 
-    void chokudaiSearch(
-        const State& state,
-        const int beam_width,
-        const int beam_depth,
-        const int time_limit
-    ) {
-        utility::mytm.CodeStart();
-        vector<priority_queue<State>> beam(beam_depth+1);
-        rep(i,beam_depth+1) beam[i] = priority_queue<State>();
-        beam[0].emplace(state);
-
-        int max_depth = 0;
-
-        while( utility::mytm.elapsed() <= TIME_LIMIT ) {
-            rep(t,beam_depth) {
-                auto &now_beam = beam[t];
-                auto &next_beam = beam[t+1];
-                rep(i,beam_width) {
-                    if( now_beam.empty() ) break;
-                    State now_state = now_beam.top();
-                    now_beam.pop();
-                    rep(d,DIR_NUM) {
-                        if( wall[now_state.x][now_state.y][d] ) continue;
-                        State next_state = State(now_state, d);
-                        if( parent.count(next_state.hash) ) continue;
-                        // cerr << now_state.x << " " << now_state.y << " " << now_state.hash << " " << next_state.hash << " " << next_state.action << '\n' << flush;
-
-                        parent[next_state.hash] = pair(now_state.hash, next_state.action);
-                        if( next_state.cnt == 0 ) {
-                            best_hash = next_state.hash;
-                            now_x = next_state.x, now_y = next_state.y;
-                            cerr << "Yeah! " << best_hash << '\n';
-                            cerr << now_x << " " << now_y << endl;
-                            return;
-                        }
-                        next_beam.emplace(next_state);
-                    }
-                }
+    void selectRect() {
+        rect_cnt = 0, rect_idx = 1;
+        rects.emplace_back(Rect());
+        priority_queue<Rect> pq;
+        while( rect_cnt < n*n ) {
+            reps(i,1,n+1) reps(j,1,n+1) {
+                if( rect[i][j] ) continue;
+                xl = yl = 0;
+                expandRect(i,j,xl,yl);
+                pq.push(Rect(i,j,xl,yl));
             }
+            auto&& r = pq.top();
+            rects.emplace_back(pq.top());
+            rect_cnt += r.area;
+            reps(i,r.x,r.x+r.xl) reps(j,r.y,r.y+r.yl) rect[i][j] = rect_idx;
+            while( !pq.empty() ) pq.pop();
+            rect_idx++;
         }
     }
 
-    void returnToStart() {
-        queue<tuple<int,int,int,int>> todo;
-        vector<vector<bool>> visited(n+2,vector<bool>(n+2,false));
-        vector<vector<pair<int,int>>> pre(n+2,vector<pair<int,int>>(n+2,pair(-1,-1)));
-        todo.push(tuple(1,1,-1,-1));
-        while( !todo.empty() ) {
-            auto [tx,ty,px,py] = todo.front(); todo.pop();
-            if( visited[tx][ty] ) continue;
-            visited[tx][ty] = true;
-            pre[tx][ty] = pair(px,py);
+    inline void expandRect(int x, int y, int& xl, int& yl) {
+        dr = dc = 1;
+        while( dr ) {
+            reps(i,y,y+yl+1) {
+                dr &= (!wall[x+xl][i][1] && !rect[x+xl+1][i]);
+                if( i != y+yl ) dr &= (!wall[x+xl+1][i][3]);
+            }
+            xl += dr;
+        }
+        while( dc ) {
+            reps(i,x,x+xl+1) {
+                dc &= (!wall[i][y+yl][3] && !rect[i][y+yl+1]);
+                if( i != x+xl ) dc &= (!wall[i][y+yl+1][1]);
+            }
+            yl += dc;
+        }
+        xl++, yl++;
+        return;
+    }
+
+    void walkRect(int idx, int tx, int ty) {
+        // 長方形塗りつぶし part (貪欲)
+        // - 四隅のどこかに到達したら dfs っぽく次に行く感じ
+        // ⇒ 縦長偶数 or 横長偶数 or それ以外 で分けて行き方をハードコード
+
+        int px = tx, py = ty, ndir = (rects[idx].xl == 1 ? 2 : 0), cnt = 0;
+        vis_rect[idx] = true;
+
+        while( true ) {
+            if( !vis[tx][ty] ) cnt++;
+            vis[tx][ty] = true;
+            ansPush(tx,ty);
+
             rep(dir,DIR_NUM) {
+                if( wall[tx][ty][dir] ) continue;
                 nx = tx+dx[dir], ny = ty+dy[dir];
-                if( visited[nx][ny] || wall[tx][ty][dir] ) continue;
-                todo.push(tuple(nx,ny,tx,ty));
+                
+                if( vis_rect[rect[nx][ny]] ) continue; // 既に到達済みの長方形は continue
+                walkRect(rect[nx][ny],nx,ny);
+                ansPush(tx,ty);
+            }
+
+            auto&& r = rects[idx];
+            int bx = tx-r.x+1, by = ty-r.y+1;
+
+            if( r.xl == 1 ) { // 横一列
+                nx = tx+dx[ndir], ny = ty+dy[ndir];
+                if( wall[tx][ty][ndir] || rect[nx][ny] != idx ) ndir = (ndir == 2 ? 3 : 2);
+            }
+            else if( r.yl == 1 ) { // 縦一列
+                nx = tx+dx[ndir], ny = ty+dy[ndir];
+                if( wall[tx][ty][ndir] || rect[nx][ny] != idx ) ndir = (ndir == 0 ? 1 : 0);
+            }
+            else if( r.xl%2 == 0 ) { // 縦偶数長 ⇒ 横くねくね
+                if( by == 1 && bx != r.xl ) ndir = 1;
+                else if( bx != 1 && ((by == 2 && bx%2 == 1) || (by == r.yl && bx%2 == 0)) ) ndir = 0;
+                else if( bx%2 == 1 ) ndir = 2;
+                else ndir = 3;
+            }
+            else { // 横偶数長 ⇒ 縦くねくね
+                if( bx == 1 && by != r.yl ) ndir = 3;
+                else if( by != 1 && ( (bx == 2 && by%2 == 1) || (bx == r.xl && by%2 == 0) ) ) ndir = 2;
+                else if( by%2 == 1 ) ndir = 0;
+                else ndir = 1;
+            }
+            if( cnt == rects[idx].area ) break;
+            tx += dx[ndir], ty += dy[ndir];
+        }
+        // 縦横ともに奇数の時は仕方なく戻る
+        while( tx != px || ty != py ) {
+            if( ans.back() != pair(tx,ty) ) ansPush(tx,ty);
+            if( tx != px ) ndir = (tx < px);
+            if( ty != py ) ndir = 2 + (ty < py);
+            tx += dx[ndir], ty += dy[ndir];
+        }
+        if( ans.back() != pair(tx,ty) ) ansPush(tx,ty);
+    }
+
+    void moveRect() {
+        // 予め初期解を何重にも重ねておく
+        long long tmp_score = best_score;
+        vector<P> tmp = ans;
+        for(int i=1; i<ans.size(); i++) {
+            auto&& [tx,ty] = ans[i];
+            tmp.emplace_back(ans[i]);
+            history[tx][ty].emplace_back(turn++);
+            vis_cnt[tx][ty]++;
+        }
+        tmp_score += best_score;
+        for(int i=1; i<ans.size(); i++) {
+            auto&& [tx,ty] = ans[i];
+            tmp.emplace_back(ans[i]);
+            history[tx][ty].emplace_back(turn++);
+            vis_cnt[tx][ty]++;
+        }
+        tmp_score += best_score;
+        swap(tmp_score, best_score);
+        swap(tmp, ans);
+        
+        // 初めにL字の3連単を列挙 (先頭のidxを保持)
+        l_shape.assign(ans.size(),false);
+        rep(i,ans.size()-1) {
+            auto&& [x1,y1] = ans[i];
+            auto&& [x2,y2] = ans[(i+1)%ans.size()];
+            auto&& [x3,y3] = ans[(i+2)%ans.size()];
+            if( (abs(x1-x2) == 1 && abs(y2-y3) == 1) || (abs(y1-y2) == 1 && abs(x2-x3) == 1) ) {
+                l_shape[i] = true;
             }
         }
-        while( now_x != 1 || now_y != 1 ) {
-            auto [px,py] = pre[now_x][now_y];
-            cerr << now_x << " " << now_y << endl;
-            ans += changeChar(now_x,now_y,px,py);
-            cerr << changeChar(now_x,now_y,px,py) << endl;
-            now_x = px, now_y = py;
+
+        // 山登り法
+        while( utility::mytm.elapsed() <= TIME_LIMIT ) {
+            // 近傍 : Ｌ型の経路を反転 (差分更新がO(1)) 
+            int rnd = rand_int()%ans.size();
+            if( !l_shape[rnd] ) continue;
+            
+            cand_score = diffScore(rnd);
+
+            // if( cand_score < best_score ) {
+            if( prob(best_score/(ans.size()-1), cand_score/(ans.size()-1), 0) > rand_double() ) {
+                cerr << cand_score/(ans.size()-1) << " " << best_score/(ans.size()-1) << '\n';
+                // int num = 0;
+                // rep(i,ans.size()) num += l_shape[i];
+                // cerr << num << '\n';
+                best_score = cand_score;
+                // 差分更新
+                auto&& [x1,y1] = ans[rnd];
+                auto   [x2,y2] = ans[(rnd+1)%ans.size()];
+                auto&& [x3,y3] = ans[(rnd+2)%ans.size()];
+                history[x2][y2].erase(find(history[x2][y2].begin(), history[x2][y2].end(), rnd+1));
+                vis_cnt[x2][y2]--;
+
+                if     ( (x1-x2 == -1 && y3-y2 ==  1) || (y1-y2 ==  1 && x3-x2 == -1) ) x2--, y2++; // 左下凸
+                else if( (x1-x2 ==  1 && y3-y2 ==  1) || (y1-y2 ==  1 && x3-x2 ==  1) ) x2++, y2++; // 左上凸
+                else if( (x1-x2 == -1 && y3-y2 == -1) || (y1-y2 == -1 && x3-x2 == -1) ) x2--, y2--; // 右下凸
+                else                                                                    x2++, y2--; // 右上凸
+
+                ans[(rnd+1)%ans.size()] = pair(x2,y2);
+                vis_cnt[x2][y2]++;
+                history[x2][y2].emplace_back(rnd+1);
+                sort(history[x2][y2].begin(), history[x2][y2].end());
+
+                // L字消滅 or 新候補
+                l_shape[rnd-1] = !l_shape[rnd-1];
+                l_shape[rnd+1] = !l_shape[rnd+1];
+            }
         }
     }
 
-    void convertAnswer() {
-        cerr << "init_hash: " << init_hash << ", best_hash: " << best_hash << '\n';
-        while( best_hash != init_hash ){
-            // cerr << best_hash << " : " << parent[best_hash].first << " " << parent[best_hash].second << '\n' << flush;
+    inline long long diffScore(const int& rnd) {
+        long long res = best_score;
+        auto&& [x1,y1] = ans[rnd];
+        auto   [x2,y2] = ans[(rnd+1)%ans.size()];
+        auto&& [x3,y3] = ans[(rnd+2)%ans.size()];
+        if( vis_cnt[x2][y2] == 1 ) return 1e17;
 
-            ans += parent[best_hash].second;
-            best_hash = parent[best_hash].first;
+        int size2 = 0;
+        auto&& h1 = history[x2][y2];
+        auto itr = lower_bound(h1.begin(), h1.end(), rnd+1);
+        int size = (( itr != h1.end() ? *itr : *h1.begin() ) - ( itr != h1.begin() ? *(itr-1) : *h1.rbegin() ) + ans.size()-1)%(ans.size()-1);
+        res -= ((size-1)*d[x2][y2])*size/2;
+        size2 += size;
+
+        if( itr != h1.end() ) itr++;
+        else itr = h1.begin()+1;
+        size = (( itr != h1.end() ? *itr : *h1.begin() ) - ( itr != h1.begin() ? *(itr-1) : *h1.rbegin() ) + ans.size()-1)%(ans.size()-1);
+        res -= ((size-1)*d[x2][y2])*size/2;
+        size2 += size;
+
+        res += ((size2-1)*d[x2][y2])*size2/2;
+
+        if( (x1-x2 == -1 && y3-y2 ==  1) || (y1-y2 ==  1 && x3-x2 == -1) ) { // 左下凸
+            if( wall[x1][y1][3] || wall[x3][y3][0] || wall[x1][y1][0] || wall[x3][y3][3] ) return 1e17;
+            x2--, y2++; 
         }
-        reverse(ans.begin(), ans.end());
+        else if( (x1-x2 ==  1 && y3-y2 ==  1) || (y1-y2 ==  1 && x3-x2 ==  1) ) { // 左上凸
+            if( wall[x1][y1][3] || wall[x3][y3][1] || wall[x1][y1][1] || wall[x3][y3][3] ) return 1e17;
+            x2++, y2++; 
+        }
+        else if( (x1-x2 == -1 && y3-y2 == -1) || (y1-y2 == -1 && x3-x2 == -1) ) { // 右下凸
+            if( wall[x1][y1][0] || wall[x3][y3][2] || wall[x1][y1][2] || wall[x3][y3][0] ) return 1e17;
+            x2--, y2--;
+        }
+        else { // 右上凸 
+            if( wall[x1][y1][1] || wall[x3][y3][2] || wall[x1][y1][2] || wall[x3][y3][1] ) return 1e17;
+             x2++, y2--; 
+        }
+
+        size2 = 0;
+        auto&& h2 = history[x2][y2];
+        itr = lower_bound(h2.begin(), h2.end(), rnd+1);
+        size = (( itr != h2.end() ? *itr : *h2.begin() ) - ( itr != h2.begin() ? *(itr-1) : *h2.rbegin() ) + ans.size()-1)%(ans.size()-1);
+        res -= ((size-1)*d[x2][y2])*size/2;
+
+        size = (( itr != h2.end() ? *itr : *h2.begin() ) - (rnd+1) + ans.size()-1)%(ans.size()-1);
+        res += ((size-1)*d[x2][y2])*size/2;
+        size = ((rnd+1) - ( itr != h2.begin() ? *(itr-1) : *h2.rbegin() ) + ans.size()-1)%(ans.size()-1);
+        res += ((size-1)*d[x2][y2])*size/2;
+
+        return res;
     }
 
     inline bool outField(int x,int y){
         if(1 <= x && x <= n && 1 <= y && y <= n)return false;
         return true;
     }
+
     inline char changeChar(int x1, int y1, int x2, int y2) {
         if     ( x2-x1 ==  1 ) return 'D';
         else if( x2-x1 == -1 ) return 'U';
         else if( y2-y1 ==  1 ) return 'R';
         else                   return 'L';
+    }
+
+    inline void ansPush(int tx, int ty) {
+        ans.emplace_back(pair(tx,ty));
+        clean_turn[tx][ty] = ans.size();
+        history[tx][ty].emplace_back(turn++);
+        vis_cnt[tx][ty]++;
     }
 };
 
