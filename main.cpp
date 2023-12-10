@@ -1,10 +1,7 @@
 #include <bits/stdc++.h>
 using namespace std;
-#if __has_include(<atcoder/all>)
-    #include <atcoder/all>
-using namespace atcoder;
-#endif
 #define rep(i, n) for(int i = 0; i < n; i++)
+#define reps(i, s, n) for (int i = s; i < n; i++)
 
 namespace utility {
     struct timer {
@@ -35,18 +32,24 @@ inline double rand_double() {
 //温度関数
 #define TIME_LIMIT 2950
 inline double temp(double start) {
-    double start_temp = 100,end_temp = 1;
+    double start_temp = 1000, end_temp = 10;
     return start_temp + (end_temp-start_temp)*((utility::mytm.elapsed()-start)/TIME_LIMIT);
 }
 
 //焼きなましの採用確率
-inline double prob(int best,int now,int start) {
-    return exp((double)(now - best) / temp(start));
+inline double prob(long long best,long long now,int start) {
+    return exp((double)(best-now) / temp(start));
 }
 
 //-----------------以下から実装部分-----------------//
 
+using P = pair<int,int>;
+using T = tuple<int,int,int,int,int>;
+
+#define HIGH 80    // d を高いと判定する閾値
+#define HIGH_T 200 // 高いところを巡回する周期
 #define DIR_NUM 4
+
 // 上下左右の順番
 vector<int> dx = {-1, 1, 0, 0};
 vector<int> dy = { 0, 0,-1, 1};
@@ -63,21 +66,36 @@ struct Rect{
 
 struct Solver{
     string s;
-    int n, xl, yl, dr, dc, nx, ny, d_total;
-    vector<bool> vis_rect;
+    int n, xl, yl, dr, dc, nx, ny, d_total, purpose;
+    vector<bool> vis_rect, high_vis;
     vector<vector<bool>> vis;
-    vector<vector<int>> d, rect, clean_turn;
+    vector<vector<int>> d, rect, clean_turn, high_idx;
     vector<vector<vector<bool>>> wall;
+    vector<vector<vector<vector<int>>>> every_dis;
+    vector<vector<vector<vector<P>>>> every_pre;
 
     vector<Rect> rects;
-    vector<pair<int,int>> ans;
+    vector<P> ans, high;
+    queue<T> todo;
 
     Solver(){
         this->input();
+        purpose = HIGH_T/2;
         rect.assign(n+2,vector<int>(n+2,0));
         vis.assign(n+2,vector<bool>(n+2,true));
         clean_turn.assign(n+2,vector<int>(n+2,0));
-        for(int i=1; i<=n; i++) for(int j=1; j<=n; j++) rect[i][j] = false, vis[i][j] = false;
+        high_idx.assign(n+2,vector<int>(n+2,0));
+        every_dis.assign(n+2,vector<vector<vector<int>>>(n+2));
+        every_pre.assign(n+2,vector<vector<vector<P>>>(n+2));
+
+        for(int i=1; i<=n; i++) for(int j=1; j<=n; j++) {
+            if( d[i][j] >= HIGH ) {
+                high_idx[i][j] = high.size();
+                high.emplace_back(P(i,j));
+            }
+            rect[i][j] = false;
+            vis[i][j] = false;
+        }
     }
 
     void input(){
@@ -200,7 +218,13 @@ struct Solver{
             if( !vis[tx][ty] ) cnt++;
             vis[tx][ty] = true;
             clean_turn[tx][ty] = ans.size();
-            ans.emplace_back(pair(tx,ty));
+            ans.emplace_back(P(tx,ty));
+
+            if( purpose <= ans.size() ) {
+                cerr << "Yeah!\n";
+                droppingByHigh(tx,ty,HIGH);
+                purpose = ans.size() + HIGH_T;
+            }
 
             rep(dir,DIR_NUM) {
                 if( wall[tx][ty][dir] ) continue;
@@ -209,7 +233,7 @@ struct Solver{
                 if( vis_rect[rect[nx][ny]] ) continue; // 既に到達済みの長方形は continue
                 paintRect(rect[nx][ny],nx,ny);
                 clean_turn[tx][ty] = ans.size();
-                ans.emplace_back(pair(tx,ty));
+                ans.emplace_back(P(tx,ty));
             }
 
             auto&& r = rects[idx];
@@ -242,18 +266,73 @@ struct Solver{
         }
         // 縦横ともに奇数の時は仕方なく戻る
         while( tx != px || ty != py ) {
-            if( ans.back() != pair(tx,ty) ) {
+            if( ans.back() != P(tx,ty) ) {
                 clean_turn[tx][ty] = ans.size();
-                ans.emplace_back(pair(tx,ty));
+                ans.emplace_back(P(tx,ty));
             }
             if( tx != px ) ndir = (tx < px);
             if( ty != py ) ndir = 2 + (ty < py);
             tx += dx[ndir], ty += dy[ndir];
         }
-        if( ans.back() != pair(tx,ty) ) {
+        if( ans.back() != P(tx,ty) ) {
             clean_turn[tx][ty] = ans.size();
-            ans.emplace_back(pair(tx,ty));
+            ans.emplace_back(P(tx,ty));
         }
+    }
+
+    inline void droppingByHigh(int x, int y, int border) {
+        // d >= 100 のマスに定期的に訪れる関数
+        int pre_size = ans.size(), high_cnt = 0;
+        high_vis.assign(high.size(),false);
+        while( high_cnt++ < high.size() ) {
+            int pp_size = ans.size();
+
+            // 現地点から 未到達 & 一番近い high の場所に行く
+            if( every_dis[x][y].empty() ) {
+                vector<vector<int>> tmp_dis(n+2,vector<int>(n+2,-1));
+                vector<vector<P>> tmp_pre(n+2,vector<P>(n+2,P(-1,-1)));
+                todo.push(T(0,x,y,-1,-1));
+                while( !todo.empty() ) {
+                    auto [tdis,tx,ty,px,py] = todo.front(); todo.pop();
+                    if( tmp_dis[tx][ty] != -1 ) continue;
+                    tmp_dis[tx][ty] = tdis;
+                    tmp_pre[tx][ty] = P(px,py);
+
+                    rep(dir,DIR_NUM) {
+                        if( wall[tx][ty][dir] ) continue;
+                        nx = tx+dx[dir], ny = ty+dy[dir];
+                        if( tmp_dis[nx][ny] != -1 ) continue;
+                        todo.push(T(tdis+1,nx,ny,tx,ty));
+                    }
+                }
+                swap(every_dis[x][y],tmp_dis);
+                swap(every_pre[x][y],tmp_pre);
+            }
+            int mini_dis = 1e9, sx = -1, sy = -1;
+            rep(i,high.size()) {
+                auto&& [tx,ty] = high[i];
+                if( d[tx][ty] < border ) continue;
+                if( !high_vis[i] && every_dis[x][y][tx][ty] < mini_dis ) {
+                    mini_dis = every_dis[x][y][tx][ty];
+                    sx = tx, sy = ty;
+                }
+            }
+
+            // P(sx,sy) へ移動
+            int tmp_x = sx, tmp_y = sy;
+            while( every_pre[x][y][tmp_x][tmp_y] != P(-1,-1) ) {
+                auto&& [px,py] = every_pre[x][y][tmp_x][tmp_y];
+                clean_turn[tmp_x][tmp_y] = ans.size();
+                ans.emplace_back(P(tmp_x,tmp_y));
+                tmp_x = px, tmp_y = py;
+            }
+            reverse(ans.begin()+pp_size,ans.end());
+            high_vis[high_idx[sx][sy]] = true;
+            x = sx, y = sy;
+        }
+        int size = ans.size();
+        for(int i=size-1; i>=pre_size-1; i--) if( ans.back() != ans[i] ) ans.emplace_back(ans[i]);
+        return;
     }
 
     inline bool outField(int x,int y){
