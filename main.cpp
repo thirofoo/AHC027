@@ -1,5 +1,9 @@
 #include <bits/stdc++.h>
 using namespace std;
+#if __has_include(<atcoder/all>)
+    #include <atcoder/all>
+using namespace atcoder;
+#endif
 #define rep(i, n) for(int i = 0; i < n; i++)
 
 namespace utility {
@@ -16,7 +20,29 @@ namespace utility {
         }
     } mytm;
 }
-#define TIME_LIMIT 100000
+
+inline unsigned int rand_int() {
+    static unsigned int tx = 123456789, ty=362436069, tz=521288629, tw=88675123;
+    unsigned int tt = (tx^(tx<<11));
+    tx = ty; ty = tz; tz = tw;
+    return ( tw=(tw^(tw>>19))^(tt^(tt>>8)) );
+}
+
+inline double rand_double() {
+    return (double)(rand_int()%(int)1e9)/1e9;
+}
+
+//温度関数
+#define TIME_LIMIT 2950
+inline double temp(double start) {
+    double start_temp = 100,end_temp = 1;
+    return start_temp + (end_temp-start_temp)*((utility::mytm.elapsed()-start)/TIME_LIMIT);
+}
+
+//焼きなましの採用確率
+inline double prob(int best,int now,int start) {
+    return exp((double)(now - best) / temp(start));
+}
 
 //-----------------以下から実装部分-----------------//
 
@@ -25,101 +51,33 @@ namespace utility {
 vector<int> dx = {-1, 1, 0, 0};
 vector<int> dy = { 0, 0,-1, 1};
 
-int n;
-vector<vector<int>> d;
-
-template <class S>
-struct Zobrist_hash_set {
-    public:
-    Zobrist_hash_set() : v(0) {
-        mt.seed(rand());
-        rnd = uniform_int_distribution<long long>(-LLONG_MAX, LLONG_MAX);
-    }
-    void flip(const S& x) { // hash flip
-        if (!x_to_hash.count(x)) x_to_hash[x] = rnd(mt);
-        v ^= x_to_hash[x];
-    }
-    void init() { v = 0; } // hash初期化
-    void set(long long _v) { v = _v; } // hash set
-    long long get() { return v; } // 現時点の状態hash値を返す．
-    
-    private:
-    long long v; // hash値
-    mt19937_64 mt;
-    uniform_int_distribution<long long> rnd;
-    unordered_map<S, long long> x_to_hash; // 各 x ∈ X に対するハッシュの割当
-};
-Zobrist_hash_set<int> zh;
-
-struct State{
-    bool isDone;
-    char action;
-    long long hash;
-    int score, x, y, cnt;
-    vector<long long> vis; // bit で訪問済みかを持っておく
-    State() : score(0), hash(0LL) {}
-    explicit State(const State& pre, const int dir) {
-        x = pre.x + dx[dir], y = pre.y + dy[dir];
-        vis = pre.vis;
-        // 各マス (n*n) * 現在地か否か で Zobrist Hash
-        zh.set( pre.hash );
-        zh.flip( pre.x*(n+2)+pre.y + (n+2)*(n+2) );
-        zh.flip( pre.x*(n+2)+pre.y );
-        if( vis[x] & (1LL << y) ) zh.flip( x*(n+2)+y );
-        zh.flip( x*(n+2)+y + (n+2)*(n+2) );
-
-        action = changeChar(dir);
-        vis[x] |= (1LL << y);
-        hash = zh.get();
-        calsScore();
-    }
-
-    inline void calsScore() {
-        score = 0, cnt = 0;
-        for(int i=1; i<=n; i++) {
-            for(int j=1; j<=n; j++) {
-                if( (vis[i] & (1LL << j)) || abs(i-x)+abs(j-y) == 0 ) continue;
-                score += d[i][j] / (abs(i-x)+abs(j-y));
-                cnt++;
-            }
-        }
-    }
-    inline char changeChar(int dir) {
-        if     ( dir == 0 ) return 'U';
-        else if( dir == 1 ) return 'D';
-        else if( dir == 2 ) return 'L';
-        else                return 'R';
-    }
-    bool operator<(const State& s) const {
-        if( cnt == s.cnt ) return (score < s.score);
-        return (cnt > s.cnt);
+struct Rect{
+    int x, y, xl, yl, area;
+    Rect() : x(0), y(0), xl(0), yl(0) {}
+    explicit Rect(int _x, int _y, int _xl, int _yl) : x(_x), y(_y), xl(_xl), yl(_yl), area(_xl*_yl) {}
+    bool operator<(const Rect& r) const {
+        if( !(area%2) == !(r.area%2) ) return (area < r.area);
+        return (area%2);
     }
 };
 
 struct Solver{
-    int now_x, now_y, nx, ny, best_score;
-    State state;
-    string s, ans;
-    long long best_hash, init_hash;
+    string s;
+    int n, xl, yl, dr, dc, nx, ny, d_total;
+    vector<bool> vis_rect;
     vector<vector<bool>> vis;
-    vector<vector<int>> clean_turn;
+    vector<vector<int>> d, rect, clean_turn;
     vector<vector<vector<bool>>> wall;
-    map<long long, pair<long long, char>> parent;
-    
+
+    vector<Rect> rects;
+    vector<pair<int,int>> ans;
+
     Solver(){
         this->input();
+        rect.assign(n+2,vector<int>(n+2,0));
         vis.assign(n+2,vector<bool>(n+2,true));
         clean_turn.assign(n+2,vector<int>(n+2,0));
-        for(int i=1; i<=n; i++) for(int j=1; j<=n; j++) vis[i][j] = false;
-
-        // State 初期化
-        state.vis = vector<long long>(n+2,0);
-        state.x = 1, state.y = 1;
-        zh.init(), zh.flip( state.x*(n+2)+state.y + (n+2)*(n+2) );
-        state.hash = zh.get();
-        init_hash = state.hash;
-        best_hash = 0;
-        state.calsScore();
+        for(int i=1; i<=n; i++) for(int j=1; j<=n; j++) rect[i][j] = false, vis[i][j] = false;
     }
 
     void input(){
@@ -140,106 +98,169 @@ struct Solver{
                 wall[i][j+1][2] = s[j-1]-'0';
             }
         }
-        for(int i=1; i<=n; i++) for(int j=1; j<=n; j++) cin >> d[i][j];
+        d_total = 0;
+        for(int i=1; i<=n; i++) for(int j=1; j<=n; j++) {
+            cin >> d[i][j];
+            d_total += d[i][j];
+        }
         return;
     }
 
     void output(){
-        cout << ans << '\n' << flush;
+        rep(i,ans.size()-1) {
+            auto&& [x1,y1] = ans[i];
+            auto&& [x2,y2] = ans[i+1];
+            char ch = changeChar(x1,y1,x2,y2);
+            cout << ch;
+        }
+        cout << '\n' << flush;
         return;
     }
 
     void solve(){
-        // 深さ 10000, 幅 1 の chokudai search で愚直判定 O(N^2) でやってみる
-        // 評価値 : ∑ (未訪問 ? d*turn : 0) / (Manhattan)
-        chokudaiSearch(state, 1, 10000, TIME_LIMIT);
-        convertAnswer(); // hash で最善手を復元
-        returnToStart(); // Start地点に戻る
+
+        // まずは貪欲解
+        // 1. 縦横少なくとも一方が偶数の長方形を確保 (今回は評価値は面積)
+        // 2. 長方形を繋げていく (長方形は少ない方が良い)
+        // ※ 奇数*奇数 の長方形は 辺の長さが1 ⇒ その面積分余分に移動必要
+        //            〃          どちらも2以上 ⇒ 2だけ余分に移動必要
+
+        int rect_cnt = 0, rect_idx = 1;
+        rects.emplace_back(Rect());
+        
+        priority_queue<Rect> pq;
+        while( rect_cnt < n*n ) {
+            for(int i=1; i<=n; i++) for(int j=1; j<=n; j++) {
+                if( rect[i][j] ) continue;
+                xl = yl = 0;
+                expandRect(i,j,xl,yl);
+                pq.push(Rect(i,j,xl,yl));
+            }
+            auto&& r = pq.top();
+            rects.emplace_back(pq.top());
+            rect_cnt += r.area;
+            for(int i=r.x; i<r.x+r.xl; i++) for(int j=r.y; j<r.y+r.yl; j++) rect[i][j] = rect_idx;
+            while( !pq.empty() ) pq.pop();
+            rect_idx++;
+        }
+        rep(d,DIR_NUM) {
+            rep(j,n+2) {
+                rep(k,n+2) cerr << wall[j][k][d];
+                cerr << endl;
+            }
+            cerr << endl;
+        }
+        cerr << endl;
+
+        rep(i,n+2) {
+            rep(j,n+2) cerr << rect[i][j] << " " << (rect[i][j] < 10 ? " " : "");
+            cerr << '\n' << flush;
+        }
+        cerr << '\n' << flush;
+
+        vis_rect.assign(rect_idx,false);
+        vis_rect[0] = true;
+        paintRect(rect[1][1],1,1);
         return;
     }
 
-    void chokudaiSearch(
-        const State& state,
-        const int beam_width,
-        const int beam_depth,
-        const int time_limit
-    ) {
-        utility::mytm.CodeStart();
-        vector<priority_queue<State>> beam(beam_depth+1);
-        rep(i,beam_depth+1) beam[i] = priority_queue<State>();
-        beam[0].emplace(state);
-
-        int max_depth = 0;
-
-        while( utility::mytm.elapsed() <= TIME_LIMIT ) {
-            rep(t,beam_depth) {
-                auto &now_beam = beam[t];
-                auto &next_beam = beam[t+1];
-                rep(i,beam_width) {
-                    if( now_beam.empty() ) break;
-                    State now_state = now_beam.top();
-                    now_beam.pop();
-                    rep(d,DIR_NUM) {
-                        if( wall[now_state.x][now_state.y][d] ) continue;
-                        State next_state = State(now_state, d);
-                        if( parent.count(next_state.hash) ) continue;
-                        // cerr << now_state.x << " " << now_state.y << " " << now_state.hash << " " << next_state.hash << " " << next_state.action << '\n' << flush;
-
-                        parent[next_state.hash] = pair(now_state.hash, next_state.action);
-                        if( next_state.cnt == 0 ) {
-                            best_hash = next_state.hash;
-                            now_x = next_state.x, now_y = next_state.y;
-                            cerr << "Yeah! " << best_hash << '\n';
-                            cerr << now_x << " " << now_y << endl;
-                            return;
-                        }
-                        next_beam.emplace(next_state);
-                    }
-                }
+    inline void expandRect(int x, int y, int& xl, int& yl) {
+        bool fr, fc;
+        dr = dc = 1;
+        while( dr != 0 || dc != 0 ) {
+            // fr: 下に進行可能か, fc : 右に進行可能か
+            fr = fc = true;
+            for(int i=y; i<=y+yl; i++) {
+                fr &= (!wall[x+xl][i][1] && !rect[x+xl+1][i]);
+                if( i != y+yl ) fr &= (!wall[x+xl+1][i][3]);
             }
+            if( !fr ) dr = 0;
+            xl += dr;
+
+            for(int i=x; i<=x+xl; i++) {
+                fc &= (!wall[i][y+yl][3] && !rect[i][y+yl+1]);
+                if( i != x+xl ) fc &= (!wall[i][y+yl+1][1]);
+            }
+            if( !fc ) dc = 0;
+            yl += dc;
         }
+        xl++, yl++;
+        return;
     }
 
-    void returnToStart() {
-        queue<tuple<int,int,int,int>> todo;
-        vector<vector<bool>> visited(n+2,vector<bool>(n+2,false));
-        vector<vector<pair<int,int>>> pre(n+2,vector<pair<int,int>>(n+2,pair(-1,-1)));
-        todo.push(tuple(1,1,-1,-1));
-        while( !todo.empty() ) {
-            auto [tx,ty,px,py] = todo.front(); todo.pop();
-            if( visited[tx][ty] ) continue;
-            visited[tx][ty] = true;
-            pre[tx][ty] = pair(px,py);
+    void paintRect(int idx, int tx, int ty) {
+        // 長方形塗りつぶし part (貪欲)
+        // - 四隅のどこかに到達したら dfs っぽく次に行く感じ
+        // ⇒ 縦長偶数 or 横長偶数 or それ以外 で分けて行き方をハードコード
+
+        int px = tx, py = ty, ndir = (rects[idx].xl == 1 ? 2 : 0), cnt = 0;
+        vis_rect[idx] = true;
+
+        while( true ) {
+            if( !vis[tx][ty] ) cnt++;
+            vis[tx][ty] = true;
+            clean_turn[tx][ty] = ans.size();
+            ans.emplace_back(pair(tx,ty));
+
             rep(dir,DIR_NUM) {
+                if( wall[tx][ty][dir] ) continue;
                 nx = tx+dx[dir], ny = ty+dy[dir];
-                if( visited[nx][ny] || wall[tx][ty][dir] ) continue;
-                todo.push(tuple(nx,ny,tx,ty));
+                
+                if( vis_rect[rect[nx][ny]] ) continue; // 既に到達済みの長方形は continue
+                paintRect(rect[nx][ny],nx,ny);
+                clean_turn[tx][ty] = ans.size();
+                ans.emplace_back(pair(tx,ty));
             }
-        }
-        while( now_x != 1 || now_y != 1 ) {
-            auto [px,py] = pre[now_x][now_y];
-            cerr << now_x << " " << now_y << endl;
-            ans += changeChar(now_x,now_y,px,py);
-            cerr << changeChar(now_x,now_y,px,py) << endl;
-            now_x = px, now_y = py;
-        }
-    }
 
-    void convertAnswer() {
-        cerr << "init_hash: " << init_hash << ", best_hash: " << best_hash << '\n';
-        while( best_hash != init_hash ){
-            // cerr << best_hash << " : " << parent[best_hash].first << " " << parent[best_hash].second << '\n' << flush;
+            auto&& r = rects[idx];
 
-            ans += parent[best_hash].second;
-            best_hash = parent[best_hash].first;
+            int bx = tx-r.x+1, by = ty-r.y+1;
+            if( r.xl == 1 ) {
+                // 横一列
+                nx = tx+dx[ndir], ny = ty+dy[ndir];
+                if( wall[tx][ty][ndir] || rect[nx][ny] != idx ) ndir = (ndir == 2 ? 3 : 2);
+            }
+            else if( r.yl == 1 ) {
+                // 縦一列
+                nx = tx+dx[ndir], ny = ty+dy[ndir];
+                if( wall[tx][ty][ndir] || rect[nx][ny] != idx ) ndir = (ndir == 0 ? 1 : 0);
+            }
+            else if( r.xl%2 == 0 ) { // 縦偶数長 ⇒ 横くねくね
+                if( by == 1 && bx != r.xl ) ndir = 1;
+                else if( bx != 1 && ((by == 2 && bx%2 == 1) || (by == r.yl && bx%2 == 0)) ) ndir = 0;
+                else if( bx%2 == 1 ) ndir = 2;
+                else ndir = 3;
+            }
+            else { // 横偶数長 ⇒ 縦くねくね
+                if( bx == 1 && by != r.yl ) ndir = 3;
+                else if( by != 1 && ( (bx == 2 && by%2 == 1) || (bx == r.xl && by%2 == 0) ) ) ndir = 2;
+                else if( by%2 == 1 ) ndir = 0;
+                else ndir = 1;
+            }
+            if( cnt == rects[idx].area ) break;
+            tx += dx[ndir], ty += dy[ndir];
         }
-        reverse(ans.begin(), ans.end());
+        // 縦横ともに奇数の時は仕方なく戻る
+        while( tx != px || ty != py ) {
+            if( ans.back() != pair(tx,ty) ) {
+                clean_turn[tx][ty] = ans.size();
+                ans.emplace_back(pair(tx,ty));
+            }
+            if( tx != px ) ndir = (tx < px);
+            if( ty != py ) ndir = 2 + (ty < py);
+            tx += dx[ndir], ty += dy[ndir];
+        }
+        if( ans.back() != pair(tx,ty) ) {
+            clean_turn[tx][ty] = ans.size();
+            ans.emplace_back(pair(tx,ty));
+        }
     }
 
     inline bool outField(int x,int y){
         if(1 <= x && x <= n && 1 <= y && y <= n)return false;
         return true;
     }
+
     inline char changeChar(int x1, int y1, int x2, int y2) {
         if     ( x2-x1 ==  1 ) return 'D';
         else if( x2-x1 == -1 ) return 'U';
